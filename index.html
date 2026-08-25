@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>TalkPulse - 英文口說隨身教練</title>
+  <meta name="description" content="專為換職位與日常口說設計的零成本隨身 AI 口說教練">
+  <meta name="theme-color" content="#0a0f1d">
+  <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="logo-area">
+        <div class="logo-icon">⚡</div>
+        <div class="logo-text">TalkPulse</div>
+      </div>
+      <div class="header-actions">
+        <button id="btn-settings" class="icon-btn" title="設定 API Key" aria-label="設定">⚙️</button>
+      </div>
+    </header>
+
+    <!-- 1. Scenario Selection Screen -->
+    <main id="view-scenario" class="view-panel scenario-screen active">
+      <section class="greeting-banner">
+        <h1>Hi! 今天想練習什麼？</h1>
+        <p>Duolingo 500+ 天的基礎很棒！現在一起把單字轉化為自信脫口而出的英文對話。</p>
+      </section>
+
+      <div class="section-title">💼 基礎職場溝通</div>
+      <div id="grid-work" class="scenario-grid"></div>
+
+      <div class="section-title">☕ 生活與旅遊日常</div>
+      <div id="grid-daily" class="scenario-grid"></div>
+    </main>
+
+    <!-- 2. Chat & Scaffold Mode Screen -->
+    <section id="view-chat" class="view-panel chat-screen">
+      <div class="chat-bar">
+        <button id="btn-chat-back" class="small-btn">‹ 返回情境</button>
+        <span id="chat-partner-title" style="font-weight:600; color: #fff;">情境對話</span>
+        <button id="btn-switch-to-call" class="mode-badge" style="cursor:pointer; border:none;">📞 切換電話模式</button>
+      </div>
+
+      <div id="chat-messages" class="chat-messages">
+        <!-- Messages dynamically inserted here -->
+      </div>
+
+      <!-- Rescue Phrases / Suggestions -->
+      <div class="suggestions-drawer">
+        <div class="suggestions-title">💡 救命句推薦（點擊可直接回覆）：</div>
+        <div id="suggestions-list" class="suggestions-list">
+          <div class="suggestion-chip">點擊下方麥克風開始說話...</div>
+        </div>
+      </div>
+
+      <!-- Control Area -->
+      <div class="chat-controls">
+        <button id="btn-chat-mic" class="voice-record-btn" aria-label="按住或點擊說話">🎤</button>
+        <div id="chat-input-status" class="input-feedback">點擊麥克風開始說英文...</div>
+      </div>
+    </section>
+
+    <!-- 3. Phone Call Mode Screen -->
+    <section id="view-call" class="view-panel call-screen">
+      <div class="call-partner-info">
+        <div class="call-avatar" id="call-avatar">🎙️</div>
+        <div class="call-partner-name" id="call-partner-name">Alex (Barista)</div>
+        <div class="call-status">
+          <span class="status-dot"></span>
+          <span id="call-status-text">通話連線中...</span>
+        </div>
+      </div>
+
+      <!-- Visualizer Wave Effect -->
+      <div class="visualizer-container" id="visualizer-wave">
+        <div class="wave-bar"></div>
+        <div class="wave-bar"></div>
+        <div class="wave-bar"></div>
+        <div class="wave-bar"></div>
+        <div class="wave-bar"></div>
+        <div class="wave-bar"></div>
+      </div>
+
+      <!-- Call Action Buttons -->
+      <div class="call-actions">
+        <button id="btn-call-mic" class="call-circle-btn mic-toggle-btn" title="按住說話">🎤</button>
+        <button id="btn-call-hangup" class="call-circle-btn hangup-btn" title="結束通話">📞</button>
+      </div>
+    </section>
+
+    <!-- Settings API Key Modal -->
+    <div id="modal-settings" class="modal-overlay">
+      <div class="modal-card">
+        <h2>🔑 設定 Google Gemini API Key</h2>
+        <p>100% 免費使用！請在 <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--primary-light);">Google AI Studio</a> 免費取得 API Key。金鑰僅儲存在您的手機本地，絕不上傳第三方伺服器。</p>
+        <input type="password" id="input-api-key" class="input-field" placeholder="AIzaSy... 或 AQ....">
+        <button id="btn-save-key" class="modal-btn">儲存並開始使用</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
