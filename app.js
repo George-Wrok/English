@@ -56,6 +56,7 @@ class TalkPulseApp {
     // Settings
     document.getElementById('btn-settings').addEventListener('click', () => this.showSettingsModal());
     document.getElementById('btn-save-key').addEventListener('click', () => this.saveApiKey());
+    document.getElementById('btn-test-key').addEventListener('click', () => this.testApiKey());
 
     // Chat navigation
     document.getElementById('btn-chat-back').addEventListener('click', () => this.switchView('scenario'));
@@ -67,6 +68,47 @@ class TalkPulseApp {
     // Call controls
     this.btnCallMic.addEventListener('click', () => this.toggleSpeech());
     this.btnCallHangup.addEventListener('click', () => this.endCallMode());
+  }
+
+  async testApiKey() {
+    const resultDiv = document.getElementById('test-result');
+    const key = this.inputApiKey.value.trim();
+    if (!key) {
+      resultDiv.innerHTML = '❌ 請先輸入 API Key';
+      return;
+    }
+
+    resultDiv.innerHTML = '⏳ 正在測試連線...';
+
+    let allResults = '';
+
+    for (const apiVer of ['v1beta', 'v1']) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/${apiVer}/models?key=${key}`;
+        const resp = await fetch(url);
+
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          allResults += `<br>❌ ${apiVer}: ${err?.error?.message || 'HTTP ' + resp.status}`;
+          continue;
+        }
+
+        const data = await resp.json();
+        const models = (data.models || [])
+          .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+          .map(m => m.name.replace('models/', ''));
+
+        if (models.length > 0) {
+          allResults += `<br>✅ ${apiVer} 可用模型 (${models.length}個):<br>` + models.map(m => `&nbsp;&nbsp;• ${m}`).join('<br>');
+        } else {
+          allResults += `<br>⚠️ ${apiVer}: 找到模型但沒有支援 generateContent 的`;
+        }
+      } catch (err) {
+        allResults += `<br>❌ ${apiVer}: 連線失敗 - ${err.message}`;
+      }
+    }
+
+    resultDiv.innerHTML = `<strong>診斷結果：</strong>${allResults}`;
   }
 
   renderScenarios() {

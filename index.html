@@ -102,8 +102,13 @@
         <p>100% 免費使用！請在 <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--primary-light);">Google AI Studio</a> 免費取得 API Key。金鑰僅儲存在您的手機本地，絕不上傳第三方伺服器。</p>
         <input type="password" id="input-api-key" class="input-field" placeholder="AIzaSy... 或 AQ....">
         <button id="btn-save-key" class="modal-btn">儲存並開始使用</button>
+        <button id="btn-test-key" class="modal-btn" style="margin-top:8px; background:rgba(255,255,255,0.08); border:1px solid var(--border-color);">🔍 測試連線（查看可用模型）</button>
+        <div id="test-result" style="margin-top:10px; font-size:12px; color:var(--text-muted); max-height:150px; overflow-y:auto; word-break:break-all;"></div>
       </div>
     </div>
+
+    <!-- Version Indicator -->
+    <div style="position:fixed; bottom:4px; right:8px; font-size:10px; color:rgba(255,255,255,0.2); z-index:999; pointer-events:none;">TalkPulse v4</div>
 
   </div>
 
