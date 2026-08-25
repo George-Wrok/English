@@ -34,7 +34,7 @@ if not exist ".git" (
     echo.
 )
 
-echo [1/4] Checking Git status...
+echo [1/5] Checking Git status...
 git status -s
 echo.
 
@@ -45,15 +45,19 @@ if "!commit_msg!"=="" (
 )
 
 echo.
-echo [2/4] Adding all files (git add .)...
+echo [2/5] Adding all files (git add .)...
 git add .
 
 echo.
-echo [3/4] Committing changes (git commit)...
+echo [3/5] Committing changes (git commit)...
 git commit -m "!commit_msg!"
 
 echo.
-echo [4/4] Pushing to remote (git push)...
+echo [4/5] Pulling and merging remote changes (git pull --rebase)...
+git pull origin main --rebase --allow-unrelated-histories
+
+echo.
+echo [5/5] Pushing to remote (git push)...
 git push -u origin main
 
 if !errorlevel! equ 0 (
