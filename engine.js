@@ -1,5 +1,5 @@
 // ==========================================================================
-// Web Speech API (STT & TTS) & Gemini AI Integration Engine (Updated)
+// Web Speech API (STT & TTS) & Gemini AI Integration Engine (Direct & Robust)
 // ==========================================================================
 
 export class SpeechEngine {
@@ -52,13 +52,13 @@ export class SpeechEngine {
       alert('您的瀏覽器不支援 Web Speech 辨識，請使用 Chrome 或 Safari。');
       return;
     }
-    if (this.synth.speaking) {
+    if (this.synth && this.synth.speaking) {
       this.synth.cancel();
     }
     try {
       this.recognition.start();
     } catch (e) {
-      console.warn('Recognition already started or error:', e);
+      console.warn('Recognition already started:', e);
     }
   }
 
@@ -98,8 +98,6 @@ export class SpeechEngine {
 export class GeminiService {
   constructor(apiKey) {
     this.apiKey = apiKey ? apiKey.trim() : '';
-    // Supported models in order of priority
-    this.models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
   }
 
   setApiKey(key) {
@@ -118,8 +116,8 @@ Role & Task:
 You are an empathetic, encouraging conversational English coach.
 Your main response to the user must be concise, natural spoken conversational English (1-2 sentences maximum).
 
-IMPORTANT OUTPUT:
-You must return your response in valid JSON format ONLY:
+IMPORTANT OUTPUT INSTRUCTION:
+Return ONLY a raw JSON object with no markdown formatting, no codeblocks:
 {
   "reply": "Your 1-2 sentence conversational reply in spoken English.",
   "translation": "繁體中文翻譯",
@@ -132,95 +130,87 @@ You must return your response in valid JSON format ONLY:
 }
 `;
 
-    const contents = messages.map(msg => ({
+    // Filter valid conversation messages
+    const formattedContents = messages.map(msg => ({
       role: msg.role === 'user' ? 'user' : 'model',
       parts: [{ text: msg.content }]
     }));
 
-    let lastError = null;
+    // Target official models with fallback endpoints
+    const requestCandidates = [
+      {
+        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`,
+        body: {
+          system_instruction: { parts: [{ text: systemInstruction }] },
+          contents: formattedContents,
+          generationConfig: {
+            response_mime_type: "application/json",
+            temperature: 0.7
+          }
+        }
+      },
+      {
+        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.apiKey}`,
+        body: {
+          system_instruction: { parts: [{ text: systemInstruction }] },
+          contents: formattedContents,
+          generationConfig: {
+            response_mime_type: "application/json",
+            temperature: 0.7
+          }
+        }
+      },
+      {
+        // Standard payload without system_instruction (for maximum legacy compatibility)
+        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.apiKey}`,
+        body: {
+          contents: [
+            { role: 'user', parts: [{ text: systemInstruction }] },
+            { role: 'model', parts: [{ text: '{"reply":"Understood!","translation":"明白","correction":"","suggestions":["OK"]}' }] },
+            ...formattedContents
+          ]
+        }
+      }
+    ];
 
-    // Try models in order for maximum compatibility
-    for (const modelName of this.models) {
+    let lastErrorMessage = '';
+
+    for (let i = 0; i < requestCandidates.length; i++) {
+      const candidate = requestCandidates[i];
       try {
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${this.apiKey}`;
-        
-        const response = await fetch(endpoint, {
+        const response = await fetch(candidate.url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            system_instruction: { parts: [{ text: systemInstruction }] },
-            contents: contents,
-            generationConfig: {
-              response_mime_type: "application/json",
-              temperature: 0.7
-            }
-          })
+          body: JSON.stringify(candidate.body)
         });
 
         if (!response.ok) {
-          const errBody = await response.json().catch(() => ({}));
-          throw new Error(errBody?.error?.message || `HTTP ${response.status}`);
+          const errData = await response.json().catch(() => ({}));
+          lastErrorMessage = errData?.error?.message || `HTTP ${response.status}`;
+          continue; // Try next fallback candidate
         }
 
         const data = await response.json();
         const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        
-        // Clean markdown code fence if present
-        let cleanedJson = rawText.trim();
-        if (cleanedJson.startsWith('```json')) {
-          cleanedJson = cleanedJson.replace(/^```json\n?/, '').replace(/\n?```$/, '');
-        } else if (cleanedJson.startsWith('```')) {
-          cleanedJson = cleanedJson.replace(/^```\n?/, '').replace(/\n?```$/, '');
+        if (!rawText) {
+          throw new Error('AI 回傳空內容');
         }
 
-        return JSON.parse(cleanedJson);
+        let cleaned = rawText.trim();
+        // Remove markdown backticks if any
+        if (cleaned.startsWith('```json')) {
+          cleaned = cleaned.replace(/^```json\s*/i, '').replace(/\s*```$/i, '');
+        } else if (cleaned.startsWith('```')) {
+          cleaned = cleaned.replace(/^```\s*/i, '').replace(/\s*```$/i, '');
+        }
+
+        return JSON.parse(cleaned);
       } catch (err) {
-        console.warn(`Model ${modelName} attempt failed:`, err.message);
-        lastError = err;
+        console.warn(`Request candidate ${i} failed:`, err);
+        lastErrorMessage = err.message;
       }
     }
 
-    throw lastError || new Error('連線失敗，請檢查 API Key 是否正確');
-  }
-
-  async generateCallReport(conversationHistory) {
-    if (!this.apiKey) return null;
-
-    const historyText = conversationHistory.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
-    const prompt = `
-Analyze this English speaking practice conversation between a beginner learner and AI:
-${historyText}
-
-Output strict JSON report:
-{
-  "strengths": ["Highlight 2-3 positive things the user did well in Traditional Chinese"],
-  "improvements": ["Highlight 2-3 specific grammatical or natural phrasing tips in Traditional Chinese with English examples"],
-  "keywords": ["List 3-5 useful workplace/daily vocabulary words from this session with Chinese explanations"]
-}
-`;
-
-    for (const modelName of this.models) {
-      try {
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${this.apiKey}`;
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { response_mime_type: "application/json" }
-          })
-        });
-
-        if (!response.ok) continue;
-        const data = await response.json();
-        let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-        if (rawText.startsWith('```json')) rawText = rawText.replace(/^```json\n?/, '').replace(/\n?```$/, '');
-        else if (rawText.startsWith('```')) rawText = rawText.replace(/^```\n?/, '').replace(/\n?```$/, '');
-        return JSON.parse(rawText);
-      } catch (e) {
-        console.warn(e);
-      }
-    }
-    return null;
+    throw new Error(lastErrorMessage || '無法連線至 Gemini API，請確認 API 金鑰有效性');
   }
 }
