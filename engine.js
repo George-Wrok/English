@@ -1,5 +1,5 @@
 // ==========================================================================
-// Web Speech API (STT & TTS) & Gemini AI Integration Engine (Direct & Robust)
+// Web Speech API (STT & TTS) & Gemini AI Integration Engine (v3 - Multi-endpoint)
 // ==========================================================================
 
 export class SpeechEngine {
@@ -77,7 +77,10 @@ export class SpeechEngine {
     utterance.rate = 0.95;
 
     const voices = this.synth.getVoices();
-    const naturalVoice = voices.find(v => (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('US')) && v.lang.startsWith('en'));
+    const naturalVoice = voices.find(v =>
+      (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('US'))
+      && v.lang.startsWith('en')
+    );
     if (naturalVoice) {
       utterance.voice = naturalVoice;
     }
@@ -104,6 +107,39 @@ export class GeminiService {
     this.apiKey = key ? key.trim() : '';
   }
 
+  // Build all possible endpoint + model combinations to try
+  _buildEndpoints() {
+    const key = this.apiKey;
+    const apiVersions = ['v1beta', 'v1'];
+    const modelNames = [
+      'gemini-2.0-flash',
+      'gemini-2.0-flash-lite',
+      'gemini-1.5-flash',
+      'gemini-1.5-flash-latest',
+      'gemini-pro'
+    ];
+
+    const endpoints = [];
+    for (const ver of apiVersions) {
+      for (const model of modelNames) {
+        endpoints.push(
+          `https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${key}`
+        );
+      }
+    }
+    return endpoints;
+  }
+
+  _cleanJsonResponse(rawText) {
+    let cleaned = rawText.trim();
+    if (cleaned.startsWith('```json')) {
+      cleaned = cleaned.replace(/^```json\s*/i, '').replace(/\s*```$/i, '');
+    } else if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```\s*/i, '').replace(/\s*```$/i, '');
+    }
+    return JSON.parse(cleaned);
+  }
+
   async sendChatMessage(messages, scenarioSystemPrompt) {
     if (!this.apiKey) {
       throw new Error('請先在設定中輸入 Gemini API Key');
@@ -116,101 +152,71 @@ Role & Task:
 You are an empathetic, encouraging conversational English coach.
 Your main response to the user must be concise, natural spoken conversational English (1-2 sentences maximum).
 
-IMPORTANT OUTPUT INSTRUCTION:
-Return ONLY a raw JSON object with no markdown formatting, no codeblocks:
+IMPORTANT: Return ONLY a raw JSON object (no markdown, no codeblocks):
 {
   "reply": "Your 1-2 sentence conversational reply in spoken English.",
   "translation": "繁體中文翻譯",
-  "correction": "若使用者的句子文法不自然，請提供一句更地道的說法 (例: Better: Can I have a latte please?)。若說得很好則留空字串。",
+  "correction": "若使用者的句子文法不自然，請提供更地道的說法。若說得很好則留空字串。",
   "suggestions": [
-    "Suggested user reply option 1 (short & natural)",
-    "Suggested user reply option 2",
-    "Suggested user reply option 3 (rescue phrase like: Could you repeat that?)"
+    "Suggested reply 1",
+    "Suggested reply 2",
+    "Suggested reply 3 (rescue phrase)"
   ]
 }
 `;
 
-    // Filter valid conversation messages
     const formattedContents = messages.map(msg => ({
       role: msg.role === 'user' ? 'user' : 'model',
       parts: [{ text: msg.content }]
     }));
 
-    // Target official models with fallback endpoints
-    const requestCandidates = [
-      {
-        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`,
-        body: {
+    const endpoints = this._buildEndpoints();
+    let lastErrorMsg = '';
+
+    for (const endpoint of endpoints) {
+      // Try with system_instruction first
+      for (const bodyPayload of [
+        // Attempt 1: Standard payload with system_instruction
+        {
           system_instruction: { parts: [{ text: systemInstruction }] },
           contents: formattedContents,
-          generationConfig: {
-            response_mime_type: "application/json",
-            temperature: 0.7
-          }
-        }
-      },
-      {
-        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.apiKey}`,
-        body: {
-          system_instruction: { parts: [{ text: systemInstruction }] },
-          contents: formattedContents,
-          generationConfig: {
-            response_mime_type: "application/json",
-            temperature: 0.7
-          }
-        }
-      },
-      {
-        // Standard payload without system_instruction (for maximum legacy compatibility)
-        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.apiKey}`,
-        body: {
+          generationConfig: { response_mime_type: "application/json", temperature: 0.7 }
+        },
+        // Attempt 2: Without system_instruction (inject as first user turn)
+        {
           contents: [
-            { role: 'user', parts: [{ text: systemInstruction }] },
-            { role: 'model', parts: [{ text: '{"reply":"Understood!","translation":"明白","correction":"","suggestions":["OK"]}' }] },
+            { role: 'user', parts: [{ text: systemInstruction + '\n\nPlease acknowledge and wait for my first message.' }] },
+            { role: 'model', parts: [{ text: '{"reply":"Sure! I am ready. Go ahead!","translation":"沒問題，我準備好了！","correction":"","suggestions":["Hi, how are you?","I would like to order a coffee.","Could you repeat that?"]}' }] },
             ...formattedContents
-          ]
+          ],
+          generationConfig: { temperature: 0.7 }
         }
-      }
-    ];
+      ]) {
+        try {
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bodyPayload)
+          });
 
-    let lastErrorMessage = '';
+          if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            lastErrorMsg = errData?.error?.message || `HTTP ${response.status}`;
+            continue;
+          }
 
-    for (let i = 0; i < requestCandidates.length; i++) {
-      const candidate = requestCandidates[i];
-      try {
-        const response = await fetch(candidate.url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(candidate.body)
-        });
+          const data = await response.json();
+          const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (!rawText) continue;
 
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          lastErrorMessage = errData?.error?.message || `HTTP ${response.status}`;
-          continue; // Try next fallback candidate
+          return this._cleanJsonResponse(rawText);
+        } catch (err) {
+          lastErrorMsg = err.message;
+          continue;
         }
-
-        const data = await response.json();
-        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!rawText) {
-          throw new Error('AI 回傳空內容');
-        }
-
-        let cleaned = rawText.trim();
-        // Remove markdown backticks if any
-        if (cleaned.startsWith('```json')) {
-          cleaned = cleaned.replace(/^```json\s*/i, '').replace(/\s*```$/i, '');
-        } else if (cleaned.startsWith('```')) {
-          cleaned = cleaned.replace(/^```\s*/i, '').replace(/\s*```$/i, '');
-        }
-
-        return JSON.parse(cleaned);
-      } catch (err) {
-        console.warn(`Request candidate ${i} failed:`, err);
-        lastErrorMessage = err.message;
       }
     }
 
-    throw new Error(lastErrorMessage || '無法連線至 Gemini API，請確認 API 金鑰有效性');
+    throw new Error(lastErrorMsg || '無法連線至 Gemini API，請確認 API 金鑰有效');
   }
 }
