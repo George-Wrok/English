@@ -17,6 +17,9 @@ if "%commitMessage%"=="" set commitMessage=Auto update
 :: Commit changes with date and time
 git commit -m "%commitMessage% - %timestamp%"
 
+:: Pull latest changes first to avoid push rejection
+git pull --rebase
+
 :: Push to remote
 echo Pushing to remote repository...
 git push
