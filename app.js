@@ -115,28 +115,43 @@ class SpeechEngine {
 
     this.recognition = new SpeechRecognition();
     this.recognition.lang = 'en-US';
-    this.recognition.continuous = false;
-    this.recognition.interimResults = false;
+    this.recognition.continuous = true;
+    this.recognition.interimResults = true;
 
     this.recognition.onstart = () => { this.isListening = true; };
     this.recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
+      let finalTranscript = '';
+      let interimTranscript = '';
+      for (let i = 0; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript + ' ';
+        } else {
+          interimTranscript += event.results[i][0].transcript;
+        }
+      }
+      const fullTranscript = (finalTranscript + interimTranscript).trim();
       if (this.customResultCallback) {
-        this.customResultCallback(transcript);
+        this.customResultCallback(fullTranscript);
       } else if (this.onResultCallback) {
-        this.onResultCallback(transcript);
+        this.onResultCallback(fullTranscript);
       }
     };
     this.recognition.onerror = (event) => {
       console.error('Speech recognition error:', event.error);
-      this.isListening = false;
-      if (this.customEndCallback) {
-        this.customEndCallback();
-      } else if (this.onEndCallback) {
-        this.onEndCallback();
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        this.isListening = false;
+        if (this.customEndCallback) this.customEndCallback();
+        else if (this.onEndCallback) this.onEndCallback();
       }
     };
     this.recognition.onend = () => {
+      // If user did not manually stop, auto-restart to prevent browser silence cutoff
+      if (this.isListening) {
+        try {
+          this.recognition.start();
+          return;
+        } catch (e) {}
+      }
       this.isListening = false;
       if (this.customEndCallback) {
         this.customEndCallback();
@@ -163,7 +178,8 @@ class SpeechEngine {
   }
 
   stopListening() {
-    if (this.recognition && this.isListening) {
+    this.isListening = false;
+    if (this.recognition) {
       try { this.recognition.stop(); } catch (e) {}
     }
   }
@@ -577,6 +593,7 @@ class TalkPulseApp {
     );
 
     this.initDOM();
+    this.initStats();
     this.renderScenarios();
     this.bindEvents();
 
@@ -640,6 +657,11 @@ class TalkPulseApp {
     this.btnRefreshNews = document.getElementById('btn-refresh-news');
     this.newsLoading = document.getElementById('news-loading');
     this.newsContainer = document.getElementById('news-container');
+
+    // Practice Stats elements
+    this.statTodayTime = document.getElementById('stat-today-time');
+    this.statTotalTime = document.getElementById('stat-total-time');
+    this.statStreakDays = document.getElementById('stat-streak-days');
   }
 
   bindEvents() {
@@ -845,6 +867,9 @@ class TalkPulseApp {
         this.views[k].classList.remove('active');
       }
     });
+    if (viewName === 'scenario') {
+      this.updateStatsUI();
+    }
   }
 
   async selectScenario(scenario) {
@@ -902,15 +927,40 @@ class TalkPulseApp {
 
   toggleSpeech() {
     if (this.speech.isListening) {
+      // Manual stop by user clicking mic again
       this.speech.stopListening();
+      this.btnChatMic.classList.remove('recording');
+      this.btnCallMic.classList.remove('speaking');
+      
+      const textToSubmit = (this.currentRecordedTranscript || '').trim();
+      this.currentRecordedTranscript = '';
+      if (textToSubmit) {
+        this.handleUserSubmit(textToSubmit);
+      } else {
+        this.chatInputStatus.innerText = '點擊麥克風開始說話...';
+        if (this.currentMode === 'call') {
+          this.callStatusText.innerText = '未收錄到語音，點擊麥克風重試';
+        }
+      }
     } else {
-      this.speech.startListening();
+      // Manual start
+      this.currentRecordedTranscript = '';
       this.btnChatMic.classList.add('recording');
       this.btnCallMic.classList.add('speaking');
-      this.chatInputStatus.innerText = '聆聽中... (請用英文說話)';
+      this.chatInputStatus.innerText = '🎙️ 聆聽中... (說完請再點一次麥克風送出)';
       if (this.currentMode === 'call') {
-        this.callStatusText.innerText = '正在聆聽您的發音...';
+        this.callStatusText.innerText = '🎙️ 正在聆聽... (說完點擊麥克風送出)';
       }
+
+      this.speech.startListening('en-US', (fullTranscript) => {
+        this.currentRecordedTranscript = fullTranscript;
+        this.chatInputStatus.innerText = `🎙️ "${fullTranscript}" (再點麥克風送出)`;
+        if (this.currentMode === 'call') {
+          this.callStatusText.innerText = `🎙️ "${fullTranscript}" (點擊麥克風送出)`;
+        }
+      }, () => {
+        this.handleSpeechEnd();
+      }, true);
     }
   }
 
@@ -933,26 +983,143 @@ class TalkPulseApp {
     });
   }
 
-  showWordToast(word) {
+  async showWordToast(word) {
     if (!this.wordToast) return;
+    const cleanWord = (word || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    let meaning = this.getWordMeaning(cleanWord);
+
     this.wordToast.innerHTML = `
-      <span>🔊 <strong>${word}</strong></span>
-      <button class="word-toast-btn btn-toast-slow">🐢 慢速</button>
+      <span style="font-size:13.5px; display:inline-flex; align-items:center; gap:4px;">
+        <span>🔊</span> <strong style="color:#fff; letter-spacing:0.3px;">${word}</strong>
+      </span>
+      <span id="word-toast-meaning" style="color:#fcd34d; font-size:12px; font-weight:500; margin-left:6px;">｜ ${meaning || '🔍 查詢中...'}</span>
     `;
     this.wordToast.classList.add('active');
-
-    const btnSlow = this.wordToast.querySelector('.btn-toast-slow');
-    if (btnSlow) {
-      btnSlow.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.speech.speak(word, null, null, 0.55);
-      });
-    }
 
     if (this.wordToastTimer) clearTimeout(this.wordToastTimer);
     this.wordToastTimer = setTimeout(() => {
       this.wordToast.classList.remove('active');
-    }, 2500);
+    }, 3500);
+
+    // If meaning not found in static dict or cache, query online and cache to localStorage
+    if (!meaning) {
+      const fetchedMeaning = await this.fetchOnlineWordMeaning(cleanWord);
+      if (fetchedMeaning) {
+        localStorage.setItem('talkpulse_word_' + cleanWord, fetchedMeaning);
+        const meaningSpan = document.getElementById('word-toast-meaning');
+        if (meaningSpan && this.wordToast.classList.contains('active')) {
+          meaningSpan.innerText = `｜ ${fetchedMeaning}`;
+        }
+      } else {
+        const meaningSpan = document.getElementById('word-toast-meaning');
+        if (meaningSpan && this.wordToast.classList.contains('active')) {
+          meaningSpan.innerText = `｜ 發音示範`;
+        }
+      }
+    }
+  }
+
+  getWordMeaning(clean) {
+    if (!clean) return '';
+    const cached = localStorage.getItem('talkpulse_word_' + clean);
+    if (cached) return cached;
+
+    const WORD_DICT = {
+      // Days, Time, Numbers
+      'thursday': '星期四', 'monday': '星期一', 'tuesday': '星期二', 'wednesday': '星期三', 'friday': '星期五', 'saturday': '星期六', 'sunday': '星期日',
+      'pm': '下午', 'am': '上午', 'today': '今天', 'tomorrow': '明天', 'yesterday': '昨天', 'week': '週/星期', 'weekend': '週末', 'month': '月份', 'year': '年',
+      'time': '時間', 'hour': '小時', 'minute': '分鐘', 'minutes': '分鐘', 'second': '秒', 'seconds': '秒', 'morning': '早晨', 'afternoon': '下午', 'evening': '傍晚', 'night': '晚上',
+      'schedule': '安排、行程表', 'meeting': '會議', 'calendar': '行事曆、日曆', 'invite': '邀請、邀請函', 'appointment': '預約、約定',
+
+      // Pronouns, Prepositions, Conjunctions
+      'about': '關於、大約', 'how about': '要不要、那...如何', 'grab': '抽空、抓取、喝個', 'grabbed': '抓取/抽空了',
+      'this': '這個、這', 'that': '那個、那', 'these': '這些', 'those': '那些',
+      'we': '我們', 'our': '我們的', 'ours': '我們的', 'us': '我們', 'you': '你/你們', 'your': '你的/你們的', 'yours': '你的',
+      'i': '我', 'me': '我', 'my': '我的', 'mine': '我的', 'he': '他', 'him': '他', 'his': '他的', 'she': '她', 'her': '她的',
+      'they': '他們', 'them': '他們', 'their': '他們的', 'it': '它', 'its': '它的',
+      'in': '在...裡面', 'on': '在...上面/時間', 'at': '在...地點/時間', 'for': '為了、對...而言', 'to': '去、到、向',
+      'from': '來自', 'with': '和...一起、用', 'without': '沒有', 'by': '在...之前、藉由', 'of': '...的', 'off': '離開、休假',
+      'up': '向上', 'down': '向下', 'out': '出去', 'over': '過去、結束', 'into': '進入', 'through': '透過、穿過',
+      'and': '和、而且', 'or': '或者', 'but': '但是', 'so': '所以、如此', 'if': '如果', 'because': '因為',
+
+      // Verbs & Common Helpers
+      'works': '適合、可行、運作', 'work': '工作、運作', 'worked': '運作了', 'works for me': '我很方便/這時間可以',
+      'chat': '聊天、對談', 'sync': '同步、討論', 'update': '更新、最新消息', 'progress': '進度、進展',
+      'status': '狀態、情況', 'report': '報告', 'send': '寄送', 'sent': '已寄出', 'sending': '寄送中',
+      'see': '看見、見面', 'look': '看、看起來', 'forward': '向前、期待', 'looking forward': '非常期待',
+      'love': '喜愛、非常想', 'want': '想要', 'wanted': '想要(過去)', 'like': '喜歡、想要', 'need': '需要', 'needed': '需要了',
+      'prefer': '偏好、更喜歡', 'help': '幫助、協助', 'cover': '代班、覆蓋', 'leave': '請假、離開',
+      'request': '申請、要求', 'confirm': '確認', 'check': '檢查、確認', 'order': '點餐、訂購', 'reserve': '預約', 'book': '預訂',
+      'cancel': '取消', 'reschedule': '改期', 'discuss': '討論', 'explain': '解釋', 'practice': '練習', 'pronounce': '發音、唸',
+      'speak': '說、講', 'listen': '聽', 'understand': '理解、明白', 'know': '知道', 'think': '認為、思考', 'mean': '意思是',
+      'talk': '談話、說話', 'sounds': '聽起來', 'sound': '聲音、聽起來', 'hear': '聽見', 'tell': '告訴',
+      'is': '是', 'are': '是', 'am': '是', 'was': '是(過去)', 'were': '是(過去)', 'be': '是、成為', 'been': '已經是',
+      'have': '有', 'has': '有', 'had': '有了', 'do': '做、助動詞', 'does': '做、助動詞', 'did': '做了',
+      'can': '可以、能', 'could': '可以(委婉)', 'will': '將會', 'would': '將會、想(委婉)', 'should': '應該', 'may': '可能、可以', 'might': '可能',
+
+      // Coffee & Dining & Travel
+      'cappuccino': '卡布奇諾', 'latte': '拿鐵', 'coffee': '咖啡', 'americano': '美式咖啡', 'espresso': '濃縮咖啡', 'tea': '茶',
+      'milk': '牛奶', 'oat': '燕麥', 'soy': '豆漿', 'almond': '杏仁', 'whole': '全脂', 'skim': '脫脂',
+      'iced': '冰的', 'hot': '熱的', 'warm': '溫的', 'size': '尺寸、大小', 'small': '小杯', 'medium': '中杯', 'large': '大杯',
+      'sugar': '糖', 'syrup': '糖漿', 'vanilla': '香草', 'caramel': '焦糖', 'extra': '額外的、加量', 'shot': '濃縮份數',
+      'cup': '杯子', 'mug': '馬克杯', 'here': '內用', 'go': '外帶/走', 'takeaway': '外帶', 'bag': '提袋', 'receipt': '收據、發票',
+      'cost': '費用', 'price': '價格', 'dollar': '美元、元', 'pay': '付款', 'card': '信用卡', 'cash': '現金',
+      'airport': '機場', 'hotel': '飯店', 'flight': '航班', 'gate': '登機門', 'boarding': '登機', 'passport': '護照',
+      'checkin': '辦理入住/登機', 'checkout': '退房', 'room': '房間', 'key': '鑰匙、關鍵', 'wifi': '無線網路', 'luggage': '行李',
+
+      // News, Tech, General
+      'breakthrough': '突破、重大進展', 'discovery': '發現', 'innovation': '創新', 'technology': '科技', 'tech': '科技',
+      'artificial': '人工的', 'intelligence': '智能', 'ai': '人工智慧', 'model': '模型', 'robot': '機器人', 'future': '未來',
+      'global': '全球的', 'culture': '文化', 'trend': '趨勢', 'market': '市場', 'economy': '經濟', 'health': '健康',
+      'lifestyle': '生活風格', 'nature': '大自然', 'space': '太空、空間', 'earth': '地球', 'energy': '能源', 'climate': '氣候',
+
+      // Common Greetings & Essentials
+      'hi': '嗨', 'hello': '你好', 'hey': '嘿、嗨', 'awesome': '太棒了、真讚', 'great': '棒極了', 'good': '好的', 'perfect': '完美',
+      'thanks': '謝謝', 'thank': '感謝', 'welcome': '不客氣、歡迎', 'please': '請', 'sure': '當然、沒問題', 'yes': '是的',
+      'no': '不', 'maybe': '也許', 'got': '明白、得到', 'it': '它', 'now': '現在', 'right': '正好、正確、右', 'right now': '現在、馬上',
+      'just': '剛才、只是', 'then': '那麼、那時', 'ready': '準備好', 'fine': '很好、沒問題', 'urgent': '緊急的', 'sick': '生病的'
+    };
+
+    if (WORD_DICT[clean]) return WORD_DICT[clean];
+    if (clean.endsWith('ing') && WORD_DICT[clean.slice(0, -3)]) return WORD_DICT[clean.slice(0, -3)] + '(進行中)';
+    if (clean.endsWith('ed') && WORD_DICT[clean.slice(0, -2)]) return WORD_DICT[clean.slice(0, -2)] + '(過去式)';
+    if (clean.endsWith('s') && WORD_DICT[clean.slice(0, -1)]) return WORD_DICT[clean.slice(0, -1)];
+    return '';
+  }
+
+  async fetchOnlineWordMeaning(cleanWord) {
+    if (!cleanWord || cleanWord.length < 2) return '';
+    try {
+      const res = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-TW&dt=t&q=${encodeURIComponent(cleanWord)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data[0] && data[0][0] && data[0][0][0]) {
+          return data[0][0][0].trim();
+        }
+      }
+    } catch (e) {}
+
+    if (this.apiKey) {
+      try {
+        await this.gemini.discoverModel();
+        const endpoint = `https://generativelanguage.googleapis.com/${this.gemini.discoveredApiVersion}/models/${this.gemini.discoveredModel}:generateContent?key=${this.apiKey}`;
+        const payload = {
+          contents: [{ role: 'user', parts: [{ text: `Provide Traditional Chinese definition for English word "${cleanWord}". Return ONLY the translation word(s), max 8 characters.` }] }]
+        };
+        const resp = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (resp.ok) {
+          const json = await resp.json();
+          const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text) return text.trim();
+        }
+      } catch (err) {}
+    }
+
+    return '';
   }
 
   checkPronunciationQuery(userText) {
@@ -1393,11 +1560,11 @@ class TalkPulseApp {
       this.speech.stopListening();
       this.isListeningShadowing = false;
       this.btnShadowingMic.classList.remove('recording');
-      this.shadowingFeedback.innerText = '已暫停跟讀。可點擊麥克風再次挑戰！';
+      this.shadowingFeedback.innerText = '已停止跟讀。可點擊麥克風再次挑戰！';
     } else {
       this.isListeningShadowing = true;
       this.btnShadowingMic.classList.add('recording');
-      this.shadowingFeedback.innerText = '🎙️ 正在聆聽... 請朗讀上方英文句子！';
+      this.shadowingFeedback.innerText = '🎙️ 正在聆聽... 請朗讀上方英文（朗讀完請再按一次麥克風結束）';
 
       // Reset word highlight classes
       const wordSpans = this.shadowingTargetBox.querySelectorAll('.shadowing-word');
@@ -1428,12 +1595,10 @@ class TalkPulseApp {
     });
 
     if (matchedCount === wordSpans.length && wordSpans.length > 0) {
-      this.shadowingFeedback.innerHTML = '🎉 <strong>太棒了！100% 完整發音正確！</strong>';
-      this.speech.stopListening();
-      this.isListeningShadowing = false;
-      this.btnShadowingMic.classList.remove('recording');
+      this.shadowingFeedback.innerHTML = '🎉 <strong>太棒了！100% 完整發音正確！</strong>（請點擊麥克風結束）';
+      // Do NOT auto stop - wait for user to tap mic
     } else {
-      this.shadowingFeedback.innerText = `已匹配 ${matchedCount} / ${wordSpans.length} 個單字，繼續朗讀...`;
+      this.shadowingFeedback.innerText = `已匹配 ${matchedCount} / ${wordSpans.length} 個單字，繼續朗讀...（點擊麥克風結束）`;
     }
   }
 
@@ -1608,6 +1773,139 @@ Guidelines:
     this.renderSuggestions(initialAI.suggestions);
     this.chatInputStatus.innerText = '點擊麥克風說出你的看法...';
     this.speech.speak(initialAI.reply);
+  }
+
+  // ==========================================================================
+  // Practice Time & Streak Statistics Tracker
+  // ==========================================================================
+
+  initStats() {
+    const raw = localStorage.getItem('talkpulse_practice_stats');
+    const defaultStats = {
+      totalSeconds: 0,
+      dailyRecords: {},
+      streak: 1,
+      lastActiveDate: ''
+    };
+
+    try {
+      this.stats = raw ? JSON.parse(raw) : defaultStats;
+    } catch (e) {
+      this.stats = defaultStats;
+    }
+
+    if (!this.stats.dailyRecords) this.stats.dailyRecords = {};
+
+    this.checkAndUpdateStreak();
+    this.updateStatsUI();
+    this.startPracticeTimer();
+  }
+
+  checkAndUpdateStreak() {
+    const today = new Date().toISOString().slice(0, 10);
+    if (!this.stats.lastActiveDate) {
+      this.stats.lastActiveDate = today;
+      this.stats.streak = 1;
+      this.saveStats();
+      return;
+    }
+
+    if (this.stats.lastActiveDate === today) {
+      return;
+    }
+
+    const lastDate = new Date(this.stats.lastActiveDate);
+    const todayDate = new Date(today);
+    const diffDays = Math.round((todayDate - lastDate) / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 1) {
+      // Consecutive day streak check
+    } else if (diffDays > 1) {
+      // Streak broken
+      this.stats.streak = 1;
+      this.saveStats();
+    }
+  }
+
+  recordPracticeActivity(seconds = 1) {
+    const today = new Date().toISOString().slice(0, 10);
+
+    if (this.stats.lastActiveDate !== today) {
+      if (this.stats.lastActiveDate) {
+        const lastDate = new Date(this.stats.lastActiveDate);
+        const todayDate = new Date(today);
+        const diffDays = Math.round((todayDate - lastDate) / (1000 * 60 * 60 * 24));
+
+        if (diffDays === 1) {
+          this.stats.streak = (this.stats.streak || 1) + 1;
+        } else if (diffDays > 1) {
+          this.stats.streak = 1;
+        }
+      } else {
+        this.stats.streak = 1;
+      }
+      this.stats.lastActiveDate = today;
+    }
+
+    this.stats.dailyRecords[today] = (this.stats.dailyRecords[today] || 0) + seconds;
+    this.stats.totalSeconds = (this.stats.totalSeconds || 0) + seconds;
+    this.saveStats();
+    this.updateStatsUI();
+  }
+
+  saveStats() {
+    try {
+      localStorage.setItem('talkpulse_practice_stats', JSON.stringify(this.stats));
+    } catch (e) {}
+  }
+
+  startPracticeTimer() {
+    setInterval(() => {
+      // Track practice time when in Chat, Call, News, or Shadowing Modal
+      const isPracticing = 
+        this.currentMode === 'chat' || 
+        this.currentMode === 'call' || 
+        this.currentMode === 'news' || 
+        (this.modalShadowing && this.modalShadowing.classList.contains('active')) ||
+        (this.modalChineseHelper && this.modalChineseHelper.classList.contains('active'));
+
+      if (isPracticing) {
+        this.recordPracticeActivity(1);
+      }
+    }, 1000);
+  }
+
+  formatDuration(totalSec) {
+    if (!totalSec || totalSec <= 0) return '0 分鐘';
+    if (totalSec < 60) return `${totalSec} 秒`;
+
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+
+    if (mins < 60) {
+      return secs > 0 && mins < 3 ? `${mins}分 ${secs}秒` : `${mins} 分鐘`;
+    }
+
+    const hours = Math.floor(mins / 60);
+    const remainMins = mins % 60;
+    return remainMins > 0 ? `${hours} 小時 ${remainMins} 分` : `${hours} 小時`;
+  }
+
+  updateStatsUI() {
+    const today = new Date().toISOString().slice(0, 10);
+    const todaySec = this.stats?.dailyRecords?.[today] || 0;
+    const totalSec = this.stats?.totalSeconds || 0;
+    const streak = this.stats?.streak || 1;
+
+    if (this.statTodayTime) {
+      this.statTodayTime.innerText = this.formatDuration(todaySec);
+    }
+    if (this.statTotalTime) {
+      this.statTotalTime.innerText = this.formatDuration(totalSec);
+    }
+    if (this.statStreakDays) {
+      this.statStreakDays.innerText = `${streak} 天`;
+    }
   }
 }
 
