@@ -1,5 +1,6 @@
 // ==========================================================================
-// Web Speech API (STT & TTS) & Gemini AI Integration Engine (v3 - Multi-endpoint)
+// Web Speech API (STT & TTS) & Gemini AI Integration Engine
+// v4 - Auto-discover available models before calling
 // ==========================================================================
 
 export class SpeechEngine {
@@ -24,23 +25,16 @@ export class SpeechEngine {
     this.recognition.continuous = false;
     this.recognition.interimResults = false;
 
-    this.recognition.onstart = () => {
-      this.isListening = true;
-    };
-
+    this.recognition.onstart = () => { this.isListening = true; };
     this.recognition.onresult = (event) => {
       const transcript = event.results[0][0].transcript;
-      if (this.onResultCallback) {
-        this.onResultCallback(transcript);
-      }
+      if (this.onResultCallback) this.onResultCallback(transcript);
     };
-
     this.recognition.onerror = (event) => {
       console.error('Speech recognition error:', event.error);
       this.isListening = false;
       if (this.onEndCallback) this.onEndCallback();
     };
-
     this.recognition.onend = () => {
       this.isListening = false;
       if (this.onEndCallback) this.onEndCallback();
@@ -52,66 +46,54 @@ export class SpeechEngine {
       alert('您的瀏覽器不支援 Web Speech 辨識，請使用 Chrome 或 Safari。');
       return;
     }
-    if (this.synth && this.synth.speaking) {
-      this.synth.cancel();
-    }
-    try {
-      this.recognition.start();
-    } catch (e) {
-      console.warn('Recognition already started:', e);
-    }
+    if (this.synth && this.synth.speaking) this.synth.cancel();
+    try { this.recognition.start(); } catch (e) { console.warn(e); }
   }
 
   stopListening() {
-    if (this.recognition && this.isListening) {
-      this.recognition.stop();
-    }
+    if (this.recognition && this.isListening) this.recognition.stop();
   }
 
   speak(text, onStart, onComplete) {
     if (!this.synth) return;
     this.synth.cancel();
-
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'en-US';
     utterance.rate = 0.95;
-
     const voices = this.synth.getVoices();
     const naturalVoice = voices.find(v =>
       (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('US'))
       && v.lang.startsWith('en')
     );
-    if (naturalVoice) {
-      utterance.voice = naturalVoice;
-    }
-
+    if (naturalVoice) utterance.voice = naturalVoice;
     if (onStart) utterance.onstart = onStart;
     if (onComplete) utterance.onend = onComplete;
-
     this.synth.speak(utterance);
   }
 
   stopSpeaking() {
-    if (this.synth) {
-      this.synth.cancel();
-    }
+    if (this.synth) this.synth.cancel();
   }
 }
 
 export class GeminiService {
   constructor(apiKey) {
     this.apiKey = apiKey ? apiKey.trim() : '';
+    this.discoveredModel = null;  // Cache the working model
+    this.discoveredApiVersion = null;
   }
 
   setApiKey(key) {
     this.apiKey = key ? key.trim() : '';
+    this.discoveredModel = null;  // Reset on key change
+    this.discoveredApiVersion = null;
   }
 
-  // Build all possible endpoint + model combinations to try
-  _buildEndpoints() {
-    const key = this.apiKey;
-    const apiVersions = ['v1beta', 'v1'];
-    const modelNames = [
+  // Step 1: Ask Google which models this API Key can access
+  async discoverModel() {
+    if (this.discoveredModel) return; // Already found
+
+    const preferredModels = [
       'gemini-2.0-flash',
       'gemini-2.0-flash-lite',
       'gemini-1.5-flash',
@@ -119,15 +101,42 @@ export class GeminiService {
       'gemini-pro'
     ];
 
-    const endpoints = [];
-    for (const ver of apiVersions) {
-      for (const model of modelNames) {
-        endpoints.push(
-          `https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${key}`
-        );
+    for (const apiVer of ['v1beta', 'v1']) {
+      try {
+        const listUrl = `https://generativelanguage.googleapis.com/${apiVer}/models?key=${this.apiKey}`;
+        const resp = await fetch(listUrl);
+        if (!resp.ok) continue;
+
+        const data = await resp.json();
+        const modelNames = (data.models || [])
+          .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+          .map(m => m.name.replace('models/', ''));
+
+        console.log(`[TalkPulse] Available models on ${apiVer}:`, modelNames);
+
+        // Pick the best preferred model that's actually available
+        for (const preferred of preferredModels) {
+          if (modelNames.some(name => name === preferred || name.startsWith(preferred))) {
+            this.discoveredModel = preferred;
+            this.discoveredApiVersion = apiVer;
+            console.log(`[TalkPulse] Selected: ${apiVer}/models/${preferred}`);
+            return;
+          }
+        }
+
+        // Fallback: pick ANY model that supports generateContent
+        if (modelNames.length > 0) {
+          this.discoveredModel = modelNames[0];
+          this.discoveredApiVersion = apiVer;
+          console.log(`[TalkPulse] Fallback selected: ${apiVer}/models/${modelNames[0]}`);
+          return;
+        }
+      } catch (err) {
+        console.warn(`[TalkPulse] ListModels on ${apiVer} failed:`, err);
       }
     }
-    return endpoints;
+
+    throw new Error('無法取得可用模型清單，請確認 API Key 正確且有效。');
   }
 
   _cleanJsonResponse(rawText) {
@@ -144,6 +153,9 @@ export class GeminiService {
     if (!this.apiKey) {
       throw new Error('請先在設定中輸入 Gemini API Key');
     }
+
+    // Auto-discover working model on first call
+    await this.discoverModel();
 
     const systemInstruction = `
 ${scenarioSystemPrompt}
@@ -170,53 +182,57 @@ IMPORTANT: Return ONLY a raw JSON object (no markdown, no codeblocks):
       parts: [{ text: msg.content }]
     }));
 
-    const endpoints = this._buildEndpoints();
-    let lastErrorMsg = '';
+    const endpoint = `https://generativelanguage.googleapis.com/${this.discoveredApiVersion}/models/${this.discoveredModel}:generateContent?key=${this.apiKey}`;
 
-    for (const endpoint of endpoints) {
-      // Try with system_instruction first
-      for (const bodyPayload of [
-        // Attempt 1: Standard payload with system_instruction
-        {
-          system_instruction: { parts: [{ text: systemInstruction }] },
-          contents: formattedContents,
-          generationConfig: { response_mime_type: "application/json", temperature: 0.7 }
-        },
-        // Attempt 2: Without system_instruction (inject as first user turn)
-        {
-          contents: [
-            { role: 'user', parts: [{ text: systemInstruction + '\n\nPlease acknowledge and wait for my first message.' }] },
-            { role: 'model', parts: [{ text: '{"reply":"Sure! I am ready. Go ahead!","translation":"沒問題，我準備好了！","correction":"","suggestions":["Hi, how are you?","I would like to order a coffee.","Could you repeat that?"]}' }] },
-            ...formattedContents
-          ],
-          generationConfig: { temperature: 0.7 }
-        }
-      ]) {
-        try {
-          const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(bodyPayload)
-          });
+    // Try standard payload first, then fallback
+    const payloads = [
+      {
+        system_instruction: { parts: [{ text: systemInstruction }] },
+        contents: formattedContents,
+        generationConfig: { response_mime_type: "application/json", temperature: 0.7 }
+      },
+      {
+        contents: [
+          { role: 'user', parts: [{ text: systemInstruction + '\n\nPlease acknowledge.' }] },
+          { role: 'model', parts: [{ text: '{"reply":"Sure! Go ahead!","translation":"沒問題！","correction":"","suggestions":["Hi!","I would like to order.","Could you repeat that?"]}' }] },
+          ...formattedContents
+        ],
+        generationConfig: { temperature: 0.7 }
+      }
+    ];
 
-          if (!response.ok) {
-            const errData = await response.json().catch(() => ({}));
-            lastErrorMsg = errData?.error?.message || `HTTP ${response.status}`;
-            continue;
-          }
+    let lastError = '';
 
-          const data = await response.json();
-          const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (!rawText) continue;
+    for (const body of payloads) {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
 
-          return this._cleanJsonResponse(rawText);
-        } catch (err) {
-          lastErrorMsg = err.message;
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          lastError = errData?.error?.message || `HTTP ${response.status}`;
           continue;
         }
+
+        const data = await response.json();
+        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!rawText) {
+          lastError = 'AI 回傳空內容';
+          continue;
+        }
+
+        return this._cleanJsonResponse(rawText);
+      } catch (err) {
+        lastError = err.message;
       }
     }
 
-    throw new Error(lastErrorMsg || '無法連線至 Gemini API，請確認 API 金鑰有效');
+    // If both payloads failed, reset discovered model and throw
+    this.discoveredModel = null;
+    this.discoveredApiVersion = null;
+    throw new Error(lastError || '連線失敗');
   }
 }
