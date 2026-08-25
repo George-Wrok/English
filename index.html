@@ -33,6 +33,9 @@
         <p>Duolingo 500+ 天的基礎很棒！現在一起把單字轉化為自信脫口而出的英文對話。</p>
       </section>
 
+      <div class="section-title">📰 每日時事快報</div>
+      <div id="grid-news" class="scenario-grid"></div>
+
       <div class="section-title">💼 基礎職場溝通</div>
       <div id="grid-work" class="scenario-grid"></div>
 
@@ -54,7 +57,10 @@
 
       <!-- Rescue Phrases / Suggestions -->
       <div class="suggestions-drawer">
-        <div class="suggestions-title">💡 救命句推薦（點擊可直接回覆）：</div>
+        <div class="suggestions-header">
+          <div class="suggestions-title">💡 救命句推薦（點擊可直接回覆）：</div>
+          <button id="btn-open-chinese-helper" class="chinese-help-btn">🇹🇼 說中文幫我想英文</button>
+        </div>
         <div id="suggestions-list" class="suggestions-list">
           <div class="suggestion-chip">點擊下方麥克風開始說話...</div>
         </div>
@@ -95,6 +101,29 @@
       </div>
     </section>
 
+    <!-- 4. Daily News Screen -->
+    <section id="view-news" class="view-panel news-screen">
+      <div class="chat-bar">
+        <button id="btn-news-back" class="small-btn">‹ 返回情境</button>
+        <span style="font-weight:600; color: #fff;">📰 每日 3 分鐘時事快報</span>
+        <button id="btn-refresh-news" class="small-btn" title="重新整理獲取最新時事">🔄 換一批</button>
+      </div>
+
+      <div class="news-banner">
+        <div class="news-banner-title">⚡ 今日全球精選短文（50~60字）</div>
+        <p class="news-banner-desc">點擊單字可聽發音，支援慢速朗讀、跟讀檢測，或直接與 AI 主播對聊討論觀點！</p>
+      </div>
+
+      <div id="news-loading" class="news-loading">
+        <div class="loading-spinner"></div>
+        <p style="margin-top:12px; font-size:13px; color:var(--text-muted);">🤖 AI 正在整理今日 3 則 50 字精選時事短文...</p>
+      </div>
+
+      <div id="news-container" class="news-container">
+        <!-- News articles dynamically inserted here -->
+      </div>
+    </section>
+
     <!-- Settings API Key Modal -->
     <div id="modal-settings" class="modal-overlay">
       <div class="modal-card">
@@ -106,6 +135,54 @@
         <div id="test-result" style="margin-top:10px; font-size:12px; color:var(--text-muted); max-height:150px; overflow-y:auto; word-break:break-all;"></div>
       </div>
     </div>
+
+    <!-- Chinese Helper Modal -->
+    <div id="modal-chinese-helper" class="modal-overlay">
+      <div class="modal-card chinese-helper-card">
+        <div class="modal-header">
+          <div class="modal-title">🇹🇼 說中文幫我想英文</div>
+          <button id="btn-close-chinese-helper" class="close-btn" aria-label="關閉">✕</button>
+        </div>
+        <p class="modal-desc">不知道怎麼回覆？直接說中文或輸入你想表達的意思，AI 將為你打造 3 種道地英文說法！</p>
+        
+        <div class="chinese-input-group">
+          <button id="btn-chinese-mic" class="chinese-mic-btn" title="點擊說中文">🎤 說中文</button>
+          <input type="text" id="input-chinese-text" class="input-field chinese-text-input" placeholder="例如：我想換燕麥奶，要加多少錢？">
+        </div>
+        <button id="btn-generate-english" class="modal-btn helper-submit-btn">✨ 幫我想英文說法</button>
+
+        <div id="chinese-helper-status" class="helper-status"></div>
+        <div id="chinese-helper-results" class="chinese-helper-results"></div>
+      </div>
+    </div>
+
+    <!-- Shadowing & Pronunciation Check Modal -->
+    <div id="modal-shadowing" class="modal-overlay">
+      <div class="modal-card shadowing-card">
+        <div class="modal-header">
+          <div class="modal-title">🎯 逐字跟讀與發音糾錯</div>
+          <button id="btn-close-shadowing" class="close-btn" aria-label="關閉">✕</button>
+        </div>
+        <p class="modal-desc">點擊下方任一單字可「聽單字發音」；點擊下方麥克風開口跟讀，系統會即時逐字檢查發音！</p>
+        
+        <div id="shadowing-target-box" class="shadowing-target-box">
+          <!-- Words dynamically inserted here -->
+        </div>
+
+        <div class="shadowing-controls">
+          <button id="btn-shadowing-mic" class="voice-record-btn shadowing-mic-btn" title="點擊開始跟讀">🎤</button>
+          <div class="shadowing-listen-btns">
+            <button id="btn-shadowing-listen" class="small-btn">🔊 聽整句</button>
+            <button id="btn-shadowing-slow" class="small-btn">🐢 慢速聽</button>
+          </div>
+        </div>
+
+        <div id="shadowing-feedback" class="shadowing-feedback">點擊上方麥克風開始朗讀此句...</div>
+      </div>
+    </div>
+
+    <!-- Floating Word Pronunciation Tooltip -->
+    <div id="word-toast" class="word-toast"></div>
 
     <!-- Version Indicator -->
     <div style="position:fixed; bottom:4px; right:8px; font-size:10px; color:rgba(255,255,255,0.2); z-index:999; pointer-events:none;">TalkPulse v4</div>
